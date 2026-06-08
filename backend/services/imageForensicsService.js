@@ -105,11 +105,11 @@ async function serperLens(imageUrl) {
 }
 
 // ---- AI-generated image detection -------------------------------------------
-// Sightengine = general AI-generated detection (uses a URL).
+// Sightengine = general AI-generated detection (multipart file upload).
 // ScamAI = face-swap / deepfake detection (needs a face; multipart file upload).
 export async function aiDetect({ url, buffer, filename, mimetype }) {
   if (process.env.SIGHTENGINE_API_USER && process.env.SIGHTENGINE_API_SECRET) {
-    return sightengineDetect(url);
+    return sightengineDetect({ buffer, filename, mimetype, url });
   }
   if (process.env.SCAMAI_API_KEY) {
     return scamaiDetect({ buffer, filename, mimetype, url });
@@ -117,14 +117,29 @@ export async function aiDetect({ url, buffer, filename, mimetype }) {
   throw new Error('كشف الذكاء الاصطناعي معطّل');
 }
 
-async function sightengineDetect(imageUrl) {
-  const params = new URLSearchParams({
-    url: imageUrl,
-    models: 'genai',
-    api_user: process.env.SIGHTENGINE_API_USER,
-    api_secret: process.env.SIGHTENGINE_API_SECRET,
-  });
-  const res = await fetch(`https://api.sightengine.com/1.0/check.json?${params}`, {
+async function sightengineDetect({ buffer, filename, mimetype, url }) {
+  // If we have a buffer, use it directly (don't go through URL)
+  if (!buffer && url) {
+    try {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      buffer = Buffer.from(await resp.arrayBuffer());
+      mimetype = mimetype || resp.headers.get('content-type') || 'image/jpeg';
+    } catch (e) {
+      console.error('Failed to fetch image from URL:', e);
+      throw new Error('تعذّر تحميل الصورة من الرابط المقدم');
+    }
+  }
+  if (!buffer) throw new Error('لا توجد صورة للتحليل');
+
+  const form = new FormData();
+  form.append('media', new Blob([buffer], { type: mimetype || 'image/jpeg' }), filename || 'image.jpg');
+  form.append('models', 'genai');
+  form.append('api_user', process.env.SIGHTENGINE_API_USER);
+  form.append('api_secret', process.env.SIGHTENGINE_API_SECRET);
+
+  const res = await fetch('https://api.sightengine.com/1.0/check.json', {
+    method: 'POST',
+    body: form,
     signal: AbortSignal.timeout(20000),
   });
   const data = await res.json();
