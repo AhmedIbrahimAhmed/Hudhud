@@ -65,14 +65,10 @@ export function AuthProvider({ children }) {
   }
 
   function logout() {
-    localStorage.removeItem('token');
-    localStorage.removeItem(USER_KEY);
-    // Clear all user-specific drafts from localStorage
-    Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('hudhud:draft_')) {
-        localStorage.removeItem(key);
-      }
-    });
+    // Clear ALL localStorage data to prevent cross-user data leaks
+    localStorage.clear();
+    // Clear sessionStorage if used
+    sessionStorage.clear();
     setUser(null);
   }
 

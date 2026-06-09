@@ -29,6 +29,7 @@ export default function ImageForensics() {
     try {
       let r;
       if (file) {
+        
         const form = new FormData();
         form.append('image', file, file.name);
         r = await api.post('/image/analyze', form, {

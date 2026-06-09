@@ -53,5 +53,28 @@ router.get('/me', requireAuth, (req, res) => {
   return res.json({ user: publicUser(user) });
 });
 
+// POST /api/auth/change-password  { currentPassword, newPassword }
+router.post('/change-password', requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'كلمة المرور الحالية والجديدة مطلوبتان' });
+  }
+  if (String(newPassword).length < 6) {
+    return res.status(400).json({ error: 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل' });
+  }
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'المستخدم غير موجود' });
+
+  if (!bcrypt.compareSync(String(currentPassword), user.password_hash)) {
+    return res.status(401).json({ error: 'كلمة المرور الحالية غير صحيحة' });
+  }
+
+  const newHash = bcrypt.hashSync(String(newPassword), 10);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, req.user.id);
+
+  return res.json({ message: 'تم تغيير كلمة المرور بنجاح' });
+});
+
 export default router;
 export { publicUser };

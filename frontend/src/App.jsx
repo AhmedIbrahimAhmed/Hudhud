@@ -34,8 +34,9 @@ export default function App() {
           </Protected>
         }
       >
-        <Route index element={<Dashboard />} />
+        <Route index element={<Navigate to="team" replace />} />
         <Route path="team" element={<TeamPage />} />
+        <Route path="write" element={<Dashboard />} />
         <Route path="voice" element={<VoiceTools />} />
         <Route path="domains" element={<DomainChecker />} />
         <Route path="images" element={<ImageForensics />} />

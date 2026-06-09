@@ -192,11 +192,14 @@ export default function RightSidebar({ onNavigate }) {
       </div>
 
       <nav className="flex-1 p-3 space-y-1">
-        <NavLink to="/" end className={linkClass} onClick={onNavigate}>
-          ✍️ كتابة مقال
-        </NavLink>
         <NavLink to="/team" className={linkClass} onClick={onNavigate}>
           👥 فريق العمل
+        </NavLink>
+        <NavLink to="/tasks" className={linkClass} onClick={onNavigate}>
+          🗓️ مهامي والتقويم
+        </NavLink>
+        <NavLink to="/write" className={linkClass} onClick={onNavigate}>
+          ✍️ كتابة مقال
         </NavLink>
         <NavLink to="/voice" className={linkClass} onClick={onNavigate}>
           🎧 أدوات صوتية
@@ -213,9 +216,7 @@ export default function RightSidebar({ onNavigate }) {
         <NavLink to="/video-check" className={linkClass} onClick={onNavigate}>
           🎥 التحقق من الفيديو
         </NavLink>
-        <NavLink to="/tasks" className={linkClass} onClick={onNavigate}>
-          🗓️ مهامي والتقويم
-        </NavLink>
+        
         <button
           type="button"
           onClick={() => setSessionsOpen(true)}
