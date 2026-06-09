@@ -216,6 +216,7 @@ export default function RightSidebar({ onNavigate }) {
         <NavLink to="/video-check" className={linkClass} onClick={onNavigate}>
           🎥 التحقق من الفيديو
         </NavLink>
+       
         
         <button
           type="button"
@@ -224,6 +225,9 @@ export default function RightSidebar({ onNavigate }) {
         >
           🗂️ المسودات
         </button>
+        <NavLink to="/policies" className={linkClass} onClick={onNavigate}>
+          📋 السياسات التحريرية
+        </NavLink>
       </nav>
 
       <SessionsModal

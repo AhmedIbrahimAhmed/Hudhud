@@ -12,6 +12,7 @@ import ImageForensics from './pages/ImageForensics.jsx';
 import VideoCheck from './pages/VideoCheck.jsx';
 import ImageEditor from './pages/ImageEditor.jsx';
 import TeamPage from './pages/TeamPage.jsx';
+import Policies from './pages/Policies.jsx';
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -44,6 +45,7 @@ export default function App() {
         <Route path="video-check" element={<VideoCheck />} />
         <Route path="tasks" element={<TodoCalendar />} />
         <Route path="profile" element={<Profile />} />
+        <Route path="policies" element={<Policies />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
