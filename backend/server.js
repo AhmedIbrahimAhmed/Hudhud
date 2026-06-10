@@ -6,6 +6,7 @@ import os from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setupTranscribeWS } from './wsTranscribe.js';
+import { init as initDb } from './db/index.js';
 
 import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
@@ -83,10 +84,18 @@ function lanAddress() {
   return null;
 }
 
-// Bind to 0.0.0.0 so the API is reachable from other devices on the network.
-server.listen(PORT, '0.0.0.0', () => {
-  const lan = lanAddress();
-  console.log(`✅ Hudhud backend running on:`);
-  console.log(`   • Local:   http://localhost:${PORT}`);
-  if (lan) console.log(`   • Network: http://${lan}:${PORT}`);
-});
+// Wait for the database (and apply the schema) before accepting requests, then
+// bind to 0.0.0.0 so the API is reachable from other devices on the network.
+initDb()
+  .then(() => {
+    server.listen(PORT, '0.0.0.0', () => {
+      const lan = lanAddress();
+      console.log(`✅ Hudhud backend running on:`);
+      console.log(`   • Local:   http://localhost:${PORT}`);
+      if (lan) console.log(`   • Network: http://${lan}:${PORT}`);
+    });
+  })
+  .catch((e) => {
+    console.error('❌ Failed to initialize database:', e);
+    process.exit(1);
+  });

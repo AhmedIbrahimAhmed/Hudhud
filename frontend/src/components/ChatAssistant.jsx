@@ -17,6 +17,7 @@ export default function ChatAssistant() {
   const online = useOnline();
   const [models, setModels] = useState([]);
   const [notice, setNotice] = useState('');
+  const [error, setError] = useState(''); // shown in a banner directly above the input
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const scrollRef = useRef(null);
@@ -116,6 +117,27 @@ export default function ChatAssistant() {
 
       {notice && <p className="px-3 text-[10px] text-amber-600">{notice}</p>}
 
+      {/* Error banner — rendered directly ABOVE the input/compose row so it
+          pushes up from the input instead of covering messages or sitting in an
+          awkward spot. Used for microphone/dictation errors propagated from
+          MicDictation. Dismissible. */}
+      {error && (
+        <div
+          role="alert"
+          className="relative z-10 mx-2 mb-1 flex items-start justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] text-flag-red"
+        >
+          <span className="leading-snug">{error}</span>
+          <button
+            type="button"
+            onClick={() => setError('')}
+            title="إغلاق"
+            className="shrink-0 text-flag-red/70 hover:text-flag-red"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Input box with a Copilot-style toolbar: text on top, then a small
           model picker + send button on the action row. */}
       <form onSubmit={send} className="relative z-10 m-2 border border-gray-200 rounded-xl bg-white focus-within:ring-1 focus-within:ring-brand">
@@ -163,7 +185,9 @@ export default function ChatAssistant() {
             <MicDictation
               compact
               online={online}
+              onError={setError}
               onTranscript={(t) => {
+                setError(''); // a successful transcript clears any stale mic error
                 setInput((prev) => (prev.trim() ? `${prev.trimEnd()} ${t}` : t));
                 inputRef.current?.focus();
               }}

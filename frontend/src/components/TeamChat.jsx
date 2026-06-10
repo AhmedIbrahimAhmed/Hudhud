@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom';
 import api from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { useOnline } from '../hooks/useOnline.js';
+import { useTeam } from '../team/TeamContext.jsx';
 import { keepIfSame } from '../utils/keepIfSame.js';
 import ImagePreviewModal from './ImagePreviewModal.jsx';
+import PdfPreviewModal from './PdfPreviewModal.jsx';
 
 // localStorage key for messages queued while offline (per user).
 const pendingKey = (id) => `hudhud_pending_chat_${id}`;
@@ -22,7 +24,11 @@ const pendingKey = (id) => `hudhud_pending_chat_${id}`;
 export default function TeamChat({ active = true, onUnreadChange, showHeader = true }) {
   const { user } = useAuth();
   const online = useOnline();
-  const [team, setTeam] = useState(null);
+  // The shared team store is the single source of truth for membership. When the
+  // user leaves a team / the team is deleted, `team` here becomes null straight
+  // away (no waiting for this component's own poll), so we react immediately.
+  const { team, version } = useTeam();
+  const teamId = team?.id ?? null;
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
@@ -31,16 +37,23 @@ export default function TeamChat({ active = true, onUnreadChange, showHeader = t
   const [error, setError] = useState('');
   const [pending, setPending] = useState([]); // messages queued while offline
   const [previewImage, setPreviewImage] = useState(null); // { url, name }
+  const [previewPdf, setPreviewPdf] = useState(null); // { url, name }
 
   const fileRef = useRef(null);
   const bottomRef = useRef(null);
   const scrollRef = useRef(null);
   const flushingRef = useRef(false);
+  // Mirror the unread callback into a ref so the polling effect (keyed only on
+  // the team id) doesn't tear down/recreate the interval when the parent passes
+  // a new callback identity.
+  const onUnreadChangeRef = useRef(onUnreadChange);
+  useEffect(() => {
+    onUnreadChangeRef.current = onUnreadChange;
+  }, [onUnreadChange]);
 
   async function load() {
     try {
       const r = await api.get('/team-messages');
-      setTeam((prev) => keepIfSame(prev, r.data.team));
       setMessages((prev) => keepIfSame(prev, r.data.messages));
     } catch {
       // Keep prior state on transient errors.
@@ -52,7 +65,7 @@ export default function TeamChat({ active = true, onUnreadChange, showHeader = t
   async function loadUnreadCount() {
     try {
       const r = await api.get('/team-messages/unread-count');
-      onUnreadChange?.(r.data.count || 0);
+      onUnreadChangeRef.current?.(r.data.count || 0);
     } catch (e) {
       console.error('Failed to load unread count:', e);
     }
@@ -61,28 +74,48 @@ export default function TeamChat({ active = true, onUnreadChange, showHeader = t
   async function markAsRead() {
     try {
       await api.post('/team-messages/mark-read');
-      onUnreadChange?.(0);
+      onUnreadChangeRef.current?.(0);
     } catch (e) {
       console.error('Failed to mark messages as read:', e);
     }
   }
 
+  // Drive the chat off the current team id from the shared store. When there is
+  // no active team (left / deleted / membership lost) we IMMEDIATELY clear the
+  // messages + reset the unread badge and skip polling entirely. When the team
+  // id changes we reset and re-fetch for the new team. `version` is included so
+  // a mutation that keeps the same team id still re-runs the fetch.
   useEffect(() => {
-    load();
-    loadUnreadCount();
-    const id = setInterval(() => {
+    if (!teamId) {
+      setMessages([]);
+      setLoading(false);
+      onUnreadChangeRef.current?.(0);
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    setMessages([]);
+    const tick = () => {
+      if (!active) return;
       load();
       loadUnreadCount();
-    }, 4000);
-    return () => clearInterval(id);
-  }, []);
+    };
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId, version]);
 
-  // Mark messages as read when chat becomes active
+  // Mark messages as read when chat becomes active (only with a live team).
   useEffect(() => {
-    if (active) {
+    if (active && teamId) {
       markAsRead();
     }
-  }, [active]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, teamId]);
 
   // Load any messages that were queued offline in a previous session.
   useEffect(() => {
@@ -104,7 +137,7 @@ export default function TeamChat({ active = true, onUnreadChange, showHeader = t
   // success drops one item, which re-runs this effect to send the next; a
   // failure stops the run so it retries on the next reconnect.
   useEffect(() => {
-    if (!online || !pending.length || flushingRef.current) return;
+    if (!online || !pending.length || flushingRef.current || !teamId) return;
     (async () => {
       flushingRef.current = true;
       try {
@@ -122,7 +155,7 @@ export default function TeamChat({ active = true, onUnreadChange, showHeader = t
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [online, pending.length]);
+  }, [online, pending.length, teamId]);
 
   function enqueue(body) {
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -139,7 +172,7 @@ export default function TeamChat({ active = true, onUnreadChange, showHeader = t
 
   async function send() {
     const body = text.trim();
-    if ((!body && !file) || busy) return;
+    if ((!body && !file) || busy || !teamId) return;
 
     // Offline: attachments need an upload (online only); plain text is queued
     // and sent automatically once the connection is back.
@@ -223,6 +256,7 @@ export default function TeamChat({ active = true, onUnreadChange, showHeader = t
               messages.map((m) => {
                 const mine = m.sender_id === user?.id;
                 const senderName = m.display_name || m.email;
+                const videoOnly = !!m.file_url && fileKind(m) === 'video' && !m.body;
                 return (
                   <div
                     key={m.id}
@@ -231,13 +265,20 @@ export default function TeamChat({ active = true, onUnreadChange, showHeader = t
                     {mine && <ChatAvatar name={senderName} src={m.avatar_path} />}
                     <div className={`flex flex-col max-w-[80%] ${mine ? 'items-start' : 'items-end'}`}>
                       <div
-                        className={`rounded-2xl px-3 py-2 text-xs ${
-                          mine ? 'bg-brand text-white' : 'bg-gray-100 text-gray-800'
+                        className={`rounded-2xl text-xs ${
+                          videoOnly
+                            ? 'bg-transparent p-0'
+                            : `px-3 py-2 ${mine ? 'bg-brand text-white' : 'bg-gray-100 text-gray-800'}`
                         }`}
                       >
-                        <Attachment message={m} mine={mine} onImageClick={(url, name) => setPreviewImage({ url, name })} />
+                        <Attachment
+                          message={m}
+                          mine={mine}
+                          onImageClick={(url, name) => setPreviewImage({ url, name })}
+                          onPdfClick={(url, name) => setPreviewPdf({ url, name })}
+                        />
                         {m.body && <p className="whitespace-pre-wrap break-words">{m.body}</p>}
-                        <div className={`text-[9px] mt-1 ${mine ? 'text-white/70' : 'text-gray-400'}`}>
+                        <div className={`text-[9px] mt-1 ${videoOnly ? 'text-gray-400' : mine ? 'text-white/70' : 'text-gray-400'}`}>
                         {new Date(m.created_at + 'Z').toLocaleTimeString('ar-EG', {
                           hour: '2-digit',
                           minute: '2-digit',
@@ -299,7 +340,13 @@ export default function TeamChat({ active = true, onUnreadChange, showHeader = t
               >
                 📎
               </button>
-              <input ref={fileRef} type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} className="hidden" />
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*,audio/*,video/*,application/pdf,.pdf,.zip,.rar"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="hidden"
+              />
               <textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
@@ -326,6 +373,15 @@ export default function TeamChat({ active = true, onUnreadChange, showHeader = t
           imageUrl={previewImage.url}
           fileName={previewImage.name}
           onClose={() => setPreviewImage(null)}
+        />
+      )}
+
+      {/* PDF Preview Modal */}
+      {previewPdf && (
+        <PdfPreviewModal
+          fileUrl={previewPdf.url}
+          fileName={previewPdf.name}
+          onClose={() => setPreviewPdf(null)}
         />
       )}
     </div>
@@ -358,6 +414,7 @@ function fileKind({ file_type = '', file_name = '', file_url = '' }) {
   if (mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/.test(name)) return 'image';
   if (mime.startsWith('audio/') || /\.(mp3|ogg|oga|opus|wav|m4a|aac|flac)$/.test(name)) return 'audio';
   if (mime.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogv|mkv|avi)$/.test(name)) return 'video';
+  if (mime === 'application/pdf' || /\.pdf$/.test(name)) return 'pdf';
   return 'file';
 }
 
@@ -383,7 +440,7 @@ function ChatAvatar({ name, src, showName = false }) {
   );
 }
 
-function Attachment({ message, mine, onImageClick }) {
+function Attachment({ message, mine, onImageClick, onPdfClick }) {
   if (!message.file_url) return null;
   const kind = fileKind(message);
 
@@ -419,12 +476,36 @@ function Attachment({ message, mine, onImageClick }) {
   if (kind === 'video') {
     return (
       <div className="mb-1 space-y-1">
-        <video controls preload="metadata" src={message.file_url} className="rounded-lg max-h-48 w-full max-w-[280px]" />
+        <video controls preload="metadata" src={message.file_url} className="rounded-lg max-w-full h-auto block bg-transparent" />
         {message.file_name && (
           <p className={`text-[10px] truncate ${mine ? 'text-white/80' : 'text-gray-500'}`}>
             🎬 {message.file_name}
           </p>
         )}
+      </div>
+    );
+  }
+
+  if (kind === 'pdf') {
+    return (
+      <div className="mb-1 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onPdfClick(message.file_url, message.file_name)}
+          title="معاينة الملف"
+          className={`flex items-center gap-1.5 underline ${mine ? 'text-white' : 'text-brand'}`}
+        >
+          📄 <span className="truncate">{message.file_name || 'ملف PDF'}</span>
+          <span className="text-[10px] opacity-70">👁</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => downloadAttachment(message)}
+          title="تنزيل الملف"
+          className={`text-[10px] opacity-70 ${mine ? 'text-white' : 'text-brand'}`}
+        >
+          ⬇
+        </button>
       </div>
     );
   }

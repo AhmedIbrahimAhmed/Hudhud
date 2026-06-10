@@ -28,15 +28,16 @@ export default function SessionsModal({ open, onClose, onPicked }) {
       const r = await api.get(`/articles/${id}`);
       const article = r.data.article;
       
-      // If not on Dashboard page, navigate there first
-      if (location.pathname !== '/') {
-        navigate('/');
+      // The article editor (Dashboard) lives at /write. If we're not there yet,
+      // navigate first and wait for it to mount before dispatching the event.
+      if (location.pathname !== '/write') {
+        navigate('/write');
         // Wait for Dashboard to mount before dispatching event
         setTimeout(() => {
           window.dispatchEvent(new CustomEvent('load-session', { detail: article }));
         }, 100);
       } else {
-        // Already on Dashboard, dispatch immediately
+        // Already on the editor, dispatch immediately
         window.dispatchEvent(new CustomEvent('load-session', { detail: article }));
       }
       
@@ -48,15 +49,17 @@ export default function SessionsModal({ open, onClose, onPicked }) {
   }
 
   function newSession() {
-    // If not on Dashboard page, navigate there first
-    if (location.pathname !== '/') {
-      navigate('/');
+    // The article editor (Dashboard) lives at /write. If we're not there yet,
+    // navigate first and wait for it to mount before dispatching the event so
+    // the editor starts a fresh/empty draft.
+    if (location.pathname !== '/write') {
+      navigate('/write');
       // Wait for Dashboard to mount before dispatching event
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('new-session'));
       }, 100);
     } else {
-      // Already on Dashboard, dispatch immediately
+      // Already on the editor, dispatch immediately
       window.dispatchEvent(new CustomEvent('new-session'));
     }
     

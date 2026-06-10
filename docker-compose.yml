@@ -1,0 +1,81 @@
+# Hudhud — full stack: PostgreSQL + Express backend + React/nginx frontend.
+# Usage:
+#   cp .env.example .env   # fill in POSTGRES_* , JWT_SECRET and any API keys
+#   docker compose up --build
+# Then open http://localhost:8080
+#
+# Service discovery: containers reach each other by name on the default
+# compose network (`db`, `backend`).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hudhud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hudhud}
+      POSTGRES_DB: ${POSTGRES_DB:-hudhud}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hudhud} -d ${POSTGRES_DB:-hudhud}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # The app reads DATABASE_URL first; it points at the `db` service.
+      DATABASE_URL: postgres://${POSTGRES_USER:-hudhud}:${POSTGRES_PASSWORD:-hudhud}@db:5432/${POSTGRES_DB:-hudhud}
+      PORT: 4000
+      NODE_ENV: production
+      # Auth
+      JWT_SECRET: ${JWT_SECRET}
+      # AI / feature API keys (all optional — features degrade gracefully).
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      DEEPGRAM_LANGUAGE: ${DEEPGRAM_LANGUAGE:-}
+      DEEPGRAM_MODEL: ${DEEPGRAM_MODEL:-}
+      # Cloudinary (file uploads / attachments)
+      CLOUDINARY_URL: ${CLOUDINARY_URL:-}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+      # Image reverse-search / AI detection
+      SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
+      SIGHTENGINE_API_USER: ${SIGHTENGINE_API_USER:-}
+      SIGHTENGINE_API_SECRET: ${SIGHTENGINE_API_SECRET:-}
+      SCAMAI_API_KEY: ${SCAMAI_API_KEY:-}
+      SCAMAI_API_URL: ${SCAMAI_API_URL:-}
+      # Domain safety / email
+      GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
+      ETHEREAL_API_KEY: ${ETHEREAL_API_KEY:-}
+    ports:
+      - "4000:4000"
+    volumes:
+      # Persist uploaded avatars across container rebuilds.
+      - backend_uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      # Open the app at http://localhost:8080 (nginx serves on 80 internally
+      # and reverse-proxies /api + /uploads to the backend).
+      - "8080:80"
+
+volumes:
+  pgdata:
+  backend_uploads:

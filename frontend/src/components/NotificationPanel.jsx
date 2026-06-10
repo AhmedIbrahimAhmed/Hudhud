@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client.js';
+import { useTeam } from '../team/TeamContext.jsx';
 
 export default function NotificationPanel({ open, onClose }) {
+  // Refresh the shared team store after accepting an invite so every view
+  // (team page, sidebar) reflects the new membership immediately.
+  const { respondToInvite: respondToInviteShared, notifyTeamDataChanged } = useTeam();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -58,12 +62,11 @@ export default function NotificationPanel({ open, onClose }) {
   async function acceptInvite() {
     if (!inviteDialog) return;
     try {
-      await api.post(`/teams/${inviteDialog.teamId}/members/${inviteDialog.userId}/accept`);
+      // Updates the shared team store immediately (membership + members list).
+      await respondToInviteShared(inviteDialog.teamId, inviteDialog.userId, 'accept');
       setInviteDialog(null);
       loadNotifications();
       loadUnreadCount();
-      // Dispatch event to refresh team members list
-      window.dispatchEvent(new CustomEvent('team-members-refresh'));
     } catch (e) {
       console.error('Failed to accept invite:', e);
     }
@@ -76,6 +79,7 @@ export default function NotificationPanel({ open, onClose }) {
       setInviteDialog(null);
       loadNotifications();
       loadUnreadCount();
+      notifyTeamDataChanged();
     } catch (e) {
       console.error('Failed to reject invite:', e);
     }

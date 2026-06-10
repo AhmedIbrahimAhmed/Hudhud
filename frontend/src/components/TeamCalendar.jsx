@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { useConfirm } from './ConfirmDialog.jsx';
+import { useTeam } from '../team/TeamContext.jsx';
 import { keepIfSame } from '../utils/keepIfSame.js';
 
 // --- date helpers (local time) ---------------------------------------------
@@ -49,6 +50,9 @@ const emptyDraft = (date) => ({
 export default function TeamCalendar({ teamId, role }) {
   const { user } = useAuth();
   const confirm = useConfirm();
+  // Shared mutation broadcast: refetch immediately when any team/task mutation
+  // happens (here or in sibling views like the task list).
+  const { version, notifyTeamDataChanged } = useTeam();
   const isLeader = role === 'leader';
 
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
@@ -78,12 +82,14 @@ export default function TeamCalendar({ teamId, role }) {
       }
     }
     load();
+    // Poll as a backstop for other users' changes; our own/sibling mutations
+    // refetch immediately via `version`.
     const id = setInterval(load, 5000);
     return () => {
       active = false;
       clearInterval(id);
     };
-  }, [teamId]);
+  }, [teamId, version]);
 
   const tasksByDate = useMemo(() => {
     const m = {};
@@ -159,6 +165,7 @@ export default function TeamCalendar({ teamId, role }) {
       await api.post('/team-tasks', { team_id: teamId, ...draft });
       setModalOpen(false);
       reload();
+      notifyTeamDataChanged();
     } catch (e) {
       setError(e.response?.data?.error || e.message);
     } finally {
@@ -182,6 +189,7 @@ export default function TeamCalendar({ teamId, role }) {
       });
       setModalOpen(false);
       reload();
+      notifyTeamDataChanged();
     } catch (e) {
       setError(e.response?.data?.error || e.message);
     } finally {
@@ -196,6 +204,7 @@ export default function TeamCalendar({ teamId, role }) {
       await api.put(`/team-tasks/${editing.id}`, { status });
       setModalOpen(false);
       reload();
+      notifyTeamDataChanged();
     } catch (e) {
       setError(e.response?.data?.error || e.message);
     } finally {
@@ -211,6 +220,7 @@ export default function TeamCalendar({ teamId, role }) {
       await api.delete(`/team-tasks/${editing.id}`);
       setModalOpen(false);
       reload();
+      notifyTeamDataChanged();
     } catch (e) {
       setError(e.response?.data?.error || e.message);
     } finally {

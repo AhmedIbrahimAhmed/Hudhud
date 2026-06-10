@@ -5,13 +5,18 @@ import api from '../api/client.js';
 // (which relays to Deepgram live) and appends recognized Arabic text as you
 // speak. Only shown when the backend has transcription enabled and the browser
 // supports MediaRecorder.
-export default function MicDictation({ onTranscript, online = true, compact = false }) {
+export default function MicDictation({ onTranscript, onError, online = true, compact = false }) {
   const [enabled, setEnabled] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [error, setError] = useState('');
   const wsRef = useRef(null);
   const recorderRef = useRef(null);
   const streamRef = useRef(null);
+
+  // Surface errors to the parent (rendered in a banner above the input) when an
+  // onError callback is provided; otherwise fall back to local inline state.
+  const [localError, setLocalError] = useState('');
+  const reportError = (msg) => (onError ? onError(msg) : setLocalError(msg));
+  const clearError = () => (onError ? onError('') : setLocalError(''));
 
   useEffect(() => {
     const supported = typeof window !== 'undefined' && 'MediaRecorder' in window;
@@ -45,7 +50,7 @@ export default function MicDictation({ onTranscript, online = true, compact = fa
   }
 
   async function start() {
-    setError('');
+    clearError();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -75,19 +80,19 @@ export default function MicDictation({ onTranscript, online = true, compact = fa
           return;
         }
         if (data.error) {
-          setError(data.error);
+          reportError(data.error);
           return;
         }
         // Append only final segments to avoid flickering/duplicates.
         if (data.is_final && data.transcript) onTranscript(data.transcript);
       };
-      ws.onerror = () => setError('تعذّر الاتصال بخدمة التفريغ');
+      ws.onerror = () => reportError('تعذّر الاتصال بخدمة التفريغ');
       ws.onclose = () => {
         streamRef.current?.getTracks().forEach((t) => t.stop());
         setRecording(false);
       };
     } catch {
-      setError('تعذّر الوصول إلى الميكروفون — تحقّق من إذن المتصفح.');
+      reportError('تعذّر الوصول إلى الميكروفون — تحقّق من إذن المتصفح.');
     }
   }
 
@@ -114,7 +119,11 @@ export default function MicDictation({ onTranscript, online = true, compact = fa
 
   return (
     <div className="flex items-center gap-2">
-      {error && <span className="text-[10px] text-flag-red max-w-[160px]">{error}</span>}
+      {/* When a parent handles errors (onError), they render in the banner above
+          the input; otherwise fall back to a small inline note here. */}
+      {!onError && localError && (
+        <span className="text-[10px] text-flag-red max-w-[160px]">{localError}</span>
+      )}
       <button
         type="button"
         onClick={recording ? stop : start}

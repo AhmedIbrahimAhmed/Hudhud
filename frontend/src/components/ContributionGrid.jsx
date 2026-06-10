@@ -71,14 +71,20 @@ export default function ContributionGrid() {
     weeks.push(week);
   }
 
-  // Get month labels for the grid
+  // Get month labels for the grid — one per month, in order. Keep only the
+  // first occurrence of each month so the boundary month (the window spans ~52
+  // weeks, e.g. Jun → Jun) isn't repeated at both ends.
   const monthLabels = [];
+  const seenMonths = new Set();
   let currentMonth = -1;
   weeks.forEach((week, weekIndex) => {
     const month = new Date(week[0].date).getMonth();
     if (month !== currentMonth) {
-      monthLabels.push({ month, weekIndex });
       currentMonth = month;
+      if (!seenMonths.has(month)) {
+        seenMonths.add(month);
+        monthLabels.push({ month, weekIndex });
+      }
     }
   });
 
@@ -94,50 +100,53 @@ export default function ContributionGrid() {
   return (
     <div className="mt-6">
       <h3 className="text-sm font-bold text-gray-700 mb-3">مساهماتك</h3>
-      <div className="bg-white border border-gray-200 rounded-2xl p-4 overflow-x-auto">
-        <div className="flex gap-2 min-w-max">
-          {/* Day labels column */}
-          <div className="flex flex-col gap-1 text-[10px] text-gray-400 w-6">
-            <div className="h-3"></div>
-            {WEEKDAYS.map((day) => (
-              <div key={day} className="h-3 flex items-center justify-end pr-1">
-                {day}
-              </div>
-            ))}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4">
+        <div dir="ltr" className="w-full">
+          {/* Month labels — each label spans its month's share of the year, so
+              the 12 months are evenly distributed and sorted across the width. */}
+          <div className="flex gap-1">
+            <div className="w-6 shrink-0"></div>
+            <div className="relative h-4 flex-1 min-w-0">
+              {monthLabels.map(({ month, weekIndex }) => (
+                <div
+                  key={`${month}-${weekIndex}`}
+                  className="absolute top-0 text-[10px] text-gray-400 whitespace-nowrap"
+                  style={{ left: `${(weekIndex / weeks.length) * 100}%` }}
+                >
+                  {MONTHS[month]}
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Grid */}
           <div className="flex gap-1">
-            {weeks.map((week, weekIndex) => (
-              <div key={weekIndex} className="flex flex-col gap-1">
-                {week.map((day, dayIndex) => (
-                  <div
-                    key={day.date}
-                    className={`w-3 h-3 rounded-sm ${day.color} cursor-pointer transition-all hover:ring-2 hover:ring-green-500/50`}
-                    onMouseEnter={(e) => handleMouseEnter(day, e)}
-                    onMouseLeave={() => setHoveredCell(null)}
-                    onMouseMove={handleMouseMove}
-                    title={`${day.date}: ${day.count} مساهمة`}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
+            {/* Day labels column — rows stretch to match the cell heights */}
+            <div className="flex flex-col gap-1 text-[10px] text-gray-400 w-6 shrink-0">
+              {WEEKDAYS.map((day) => (
+                <div key={day} className="flex-1 flex items-center justify-end pr-1">
+                  {day}
+                </div>
+              ))}
+            </div>
 
-        {/* Month labels */}
-        <div className="flex gap-2 mt-2 min-w-max">
-          <div className="w-6"></div>
-          <div className="flex gap-1">
-            {monthLabels.map(({ month, weekIndex }) => (
-              <div
-                key={`${month}-${weekIndex}`}
-                className="text-[10px] text-gray-400"
-                style={{ marginLeft: weekIndex === 0 ? 0 : `${weekIndex * 13}px` }}
-              >
-                {MONTHS[month]}
-              </div>
-            ))}
+            {/* Grid — 52 week columns sharing the full width equally; each cell
+                is square (aspect-square) so the squares grow to fill the space. */}
+            <div className="flex gap-1 flex-1 min-w-0">
+              {weeks.map((week, weekIndex) => (
+                <div key={weekIndex} className="flex flex-col gap-1 flex-1 min-w-0">
+                  {week.map((day) => (
+                    <div
+                      key={day.date}
+                      className={`w-full aspect-square rounded-sm border border-gray-200/60 ${day.color} cursor-pointer transition-all hover:ring-2 hover:ring-green-500/50`}
+                      onMouseEnter={(e) => handleMouseEnter(day, e)}
+                      onMouseLeave={() => setHoveredCell(null)}
+                      onMouseMove={handleMouseMove}
+                      title={`${day.date}: ${day.count} مساهمة`}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 

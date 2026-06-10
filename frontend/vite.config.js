@@ -93,8 +93,8 @@ export default defineConfig({
     // Allow access via tunnel hosts (cloudflared/ngrok) for HTTPS testing.
     allowedHosts: true,
     proxy: {
-      '/api': { target: 'http://localhost:4000', ws: true },
-      '/uploads': 'http://localhost:4000',
+      '/api': { target: 'http://127.0.0.1:4000', ws: true },
+      '/uploads': 'http://127.0.0.1:4000',
     },
   },
   // `vite preview` serves the production build — the only mode where the
@@ -102,8 +102,8 @@ export default defineConfig({
   preview: {
     port: 4173,
     proxy: {
-      '/api': { target: 'http://localhost:4000', ws: true },
-      '/uploads': 'http://localhost:4000',
+      '/api': { target: 'http://127.0.0.1:4000', ws: true },
+      '/uploads': 'http://127.0.0.1:4000',
     },
   },
 });

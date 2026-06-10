@@ -1,9 +1,12 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import RightSidebar from './RightSidebar.jsx';
 import LeftSidebar from './LeftSidebar.jsx';
+import NotificationPanel from './NotificationPanel.jsx';
 import { ChatProvider } from '../chat/ChatContext.jsx';
+import { TeamProvider } from '../team/TeamContext.jsx';
 import OnlineBadge from './OnlineBadge.jsx';
+import api from '../api/client.js';
 
 const MIN = 180;
 const MAX = 520;
@@ -84,8 +87,31 @@ export default function Layout() {
   const [leftWidth, setLeftWidth] = useState(() => load('leftWidth', 320));
   const [navOpen, setNavOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  // Mobile-only notifications: the bell lives in the top header (below lg) and
+  // opens the shared NotificationPanel modal. We poll the same unread-count
+  // endpoint the sidebar bell uses so the badge stays in sync.
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const base = useRef({ right: 240, left: 320 });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadUnreadCount() {
+      try {
+        const r = await api.get('/notifications/unread-count');
+        if (!cancelled) setUnreadCount(r.data.count);
+      } catch (e) {
+        console.error('Failed to load unread count:', e);
+      }
+    }
+    loadUnreadCount();
+    const interval = setInterval(loadUnreadCount, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [notifOpen]);
 
   function dragRight(dx) {
     const w = clamp(base.current.right - dx);
@@ -99,17 +125,35 @@ export default function Layout() {
   }
 
   return (
+    <TeamProvider>
     <ChatProvider>
     <div className="h-full flex flex-col lg:flex-row bg-gray-50">
       {/* Mobile top bar */}
       <header className="lg:hidden flex items-center justify-between bg-white border-b border-gray-200 px-4 py-3 shrink-0">
-        <button
-          onClick={() => setNavOpen(true)}
-          className="text-gray-600 text-xl leading-none"
-          aria-label="القائمة"
-        >
-          ☰
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setNavOpen(true)}
+            className="text-gray-600 text-xl leading-none"
+            aria-label="القائمة"
+          >
+            ☰
+          </button>
+          {/* Notifications bell (mobile only) beside the menu button. */}
+          <button
+            type="button"
+            onClick={() => setNotifOpen(true)}
+            className="relative text-gray-600 text-xl leading-none p-1"
+            aria-label="الإشعارات"
+            title="الإشعارات"
+          >
+            🔔
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -left-1 bg-brand text-white text-[10px] min-w-[18px] h-[18px] px-1 rounded-full grid place-items-center">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+        </div>
         <div className="flex items-center gap-2">
           <h1 className="text-lg font-bold text-brand">هدهد</h1>
           <OnlineBadge />
@@ -157,7 +201,16 @@ export default function Layout() {
           </div>
         </div>
       </Drawer>
+
+      {/* Mobile notifications panel (opened from the header bell). */}
+      <NotificationPanel
+        open={notifOpen}
+        onClose={() => {
+          setNotifOpen(false);
+        }}
+      />
     </div>
     </ChatProvider>
+    </TeamProvider>
   );
 }

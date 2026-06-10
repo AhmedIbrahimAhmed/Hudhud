@@ -1,56 +1,30 @@
-import { useEffect, useState } from 'react';
-import api from '../api/client.js';
+import { useState } from 'react';
 import { useConfirm } from './ConfirmDialog.jsx';
+import { useTeam } from '../team/TeamContext.jsx';
 
 // `bare` drops the card chrome (border/bg/padding) for embedding inside another
 // container such as the left sidebar, avoiding a box-in-a-box double border.
 export default function TeamManagement({ bare = false }) {
   const cardClass = bare ? '' : 'bg-white border border-gray-200 rounded-2xl p-6';
-  const [team, setTeam] = useState(null);
-  const [role, setRole] = useState(null);
-  const [members, setMembers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Shared team state + mutation helpers. Every mutation updates the shared
+  // store on success, so the team page (and any other consumer) reflects the
+  // change immediately — no waiting for a poll.
+  const {
+    team,
+    role,
+    members,
+    loading,
+    createTeam: createTeamShared,
+    deleteTeam: deleteTeamShared,
+    leaveTeam: leaveTeamShared,
+    inviteMember: inviteMemberShared,
+    removeMember: removeMemberShared,
+  } = useTeam();
   const [showCreateTeam, setShowCreateTeam] = useState(false);
   const [teamName, setTeamName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [error, setError] = useState('');
   const confirm = useConfirm();
-
-  useEffect(() => {
-    loadTeam();
-
-    // Listen for team members refresh event (e.g., after accepting invite)
-    function handleRefresh() {
-      loadTeam();
-    }
-    window.addEventListener('team-members-refresh', handleRefresh);
-    return () => window.removeEventListener('team-members-refresh', handleRefresh);
-  }, []);
-
-  async function loadTeam() {
-    setLoading(true);
-    try {
-      const r = await api.get('/teams');
-      setTeam(r.data.team);
-      setRole(r.data.role);
-      if (r.data.team) {
-        loadMembers(r.data.team.id);
-      }
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadMembers(teamId) {
-    try {
-      const r = await api.get(`/teams/${teamId}/members`);
-      setMembers(r.data.members);
-    } catch (e) {
-      console.error('Failed to load members:', e);
-    }
-  }
 
   async function createTeam() {
     if (!teamName.trim()) {
@@ -58,10 +32,10 @@ export default function TeamManagement({ bare = false }) {
       return;
     }
     try {
-      await api.post('/teams', { name: teamName });
+      await createTeamShared(teamName);
       setShowCreateTeam(false);
       setTeamName('');
-      loadTeam();
+      setError('');
     } catch (e) {
       setError(e.response?.data?.error || e.message);
     }
@@ -73,10 +47,9 @@ export default function TeamManagement({ bare = false }) {
       return;
     }
     try {
-      await api.post('/teams/invite', { email: inviteEmail });
+      await inviteMemberShared(inviteEmail);
       setInviteEmail('');
       setError('');
-      loadMembers(team.id);
     } catch (e) {
       setError(e.response?.data?.error || e.message);
     }
@@ -92,10 +65,7 @@ export default function TeamManagement({ bare = false }) {
     )
       return;
     try {
-      await api.delete(`/teams/${team.id}`);
-      setTeam(null);
-      setRole(null);
-      setMembers([]);
+      await deleteTeamShared();
     } catch (e) {
       setError(e.response?.data?.error || e.message);
     }
@@ -111,10 +81,7 @@ export default function TeamManagement({ bare = false }) {
     )
       return;
     try {
-      await api.post(`/teams/${team.id}/leave`);
-      setTeam(null);
-      setRole(null);
-      setMembers([]);
+      await leaveTeamShared();
     } catch (e) {
       setError(e.response?.data?.error || e.message);
     }
@@ -123,8 +90,7 @@ export default function TeamManagement({ bare = false }) {
   async function removeMember(userId) {
     if (!(await confirm({ message: 'هل أنت متأكد من إزالة هذا العضو؟', confirmText: 'إزالة', danger: true }))) return;
     try {
-      await api.delete(`/teams/${team.id}/members/${userId}`);
-      loadMembers(team.id);
+      await removeMemberShared(userId);
     } catch (e) {
       setError(e.response?.data?.error || e.message);
     }

@@ -12,10 +12,11 @@ const upload = multer({
 });
 
 // The user's single team (leader is stored as an accepted member too).
-function getUserTeamId(userId) {
-  const m = db
-    .prepare("SELECT team_id FROM team_members WHERE user_id = ? AND status = 'accepted'")
-    .get(userId);
+async function getUserTeamId(userId) {
+  const m = await db.get(
+    "SELECT team_id FROM team_members WHERE user_id = $1 AND status = 'accepted'",
+    [userId]
+  );
   return m?.team_id || null;
 }
 
@@ -27,87 +28,107 @@ const MESSAGE_SELECT = `
 `;
 
 // GET /api/team-messages - messages for the current user's team
-router.get('/', requireAuth, (req, res) => {
-  const teamId = getUserTeamId(req.user.id);
-  if (!teamId) return res.json({ team: null, messages: [] });
+router.get('/', requireAuth, async (req, res, next) => {
+  try {
+    const teamId = await getUserTeamId(req.user.id);
+    if (!teamId) return res.json({ team: null, messages: [] });
 
-  const team = db.prepare('SELECT id, name FROM teams WHERE id = ?').get(teamId);
-  const messages = db
-    .prepare(`${MESSAGE_SELECT} WHERE m.team_id = ? ORDER BY m.id ASC LIMIT 300`)
-    .all(teamId);
+    const team = await db.get('SELECT id, name FROM teams WHERE id = $1', [teamId]);
+    const messages = await db.all(
+      `${MESSAGE_SELECT} WHERE m.team_id = $1 ORDER BY m.id ASC LIMIT 300`,
+      [teamId]
+    );
 
-  return res.json({ team, messages });
+    return res.json({ team, messages });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // GET /api/team-messages/unread-count - get unread message count for current user
-router.get('/unread-count', requireAuth, (req, res) => {
-  const teamId = getUserTeamId(req.user.id);
-  if (!teamId) return res.json({ count: 0 });
+router.get('/unread-count', requireAuth, async (req, res, next) => {
+  try {
+    const teamId = await getUserTeamId(req.user.id);
+    if (!teamId) return res.json({ count: 0 });
 
-  const count = db
-    .prepare(`
+    const count = await db.get(
+      `
       SELECT COUNT(*) as c
       FROM team_messages m
-      WHERE m.team_id = ?
-        AND m.sender_id != ?
+      WHERE m.team_id = $1
+        AND m.sender_id != $2
         AND NOT EXISTS (
           SELECT 1 FROM team_message_reads r
-          WHERE r.message_id = m.id AND r.user_id = ?
+          WHERE r.message_id = m.id AND r.user_id = $3
         )
-    `)
-    .get(teamId, req.user.id, req.user.id);
+    `,
+      [teamId, req.user.id, req.user.id]
+    );
 
-  return res.json({ count: count.c || 0 });
+    return res.json({ count: Number(count.c) || 0 });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // POST /api/team-messages/mark-read - mark all messages as read for current user
-router.post('/mark-read', requireAuth, (req, res) => {
-  const teamId = getUserTeamId(req.user.id);
-  if (!teamId) return res.json({ ok: true });
+router.post('/mark-read', requireAuth, async (req, res, next) => {
+  try {
+    const teamId = await getUserTeamId(req.user.id);
+    if (!teamId) return res.json({ ok: true });
 
-  // Get all unread messages for this user
-  const unreadMessages = db
-    .prepare(`
+    // Get all unread messages for this user
+    const unreadMessages = await db.all(
+      `
       SELECT m.id
       FROM team_messages m
-      WHERE m.team_id = ?
-        AND m.sender_id != ?
+      WHERE m.team_id = $1
+        AND m.sender_id != $2
         AND NOT EXISTS (
           SELECT 1 FROM team_message_reads r
-          WHERE r.message_id = m.id AND r.user_id = ?
+          WHERE r.message_id = m.id AND r.user_id = $3
         )
-    `)
-    .all(teamId, req.user.id, req.user.id);
+    `,
+      [teamId, req.user.id, req.user.id]
+    );
 
-  // Mark each as read
-  unreadMessages.forEach(msg => {
-    db.prepare(
-      'INSERT OR IGNORE INTO team_message_reads (message_id, user_id, read_at) VALUES (?, ?, datetime(\'now\'))'
-    ).run(msg.id, req.user.id);
-  });
+    // Mark each as read
+    for (const msg of unreadMessages) {
+      await db.run(
+        `INSERT INTO team_message_reads (message_id, user_id, read_at) VALUES ($1, $2, now())
+         ON CONFLICT (message_id, user_id) DO NOTHING`,
+        [msg.id, req.user.id]
+      );
+    }
 
-  return res.json({ ok: true, marked: unreadMessages.length });
+    return res.json({ ok: true, marked: unreadMessages.length });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // POST /api/team-messages - send a message (text and/or attachment)
-router.post('/', requireAuth, (req, res) => {
-  const teamId = getUserTeamId(req.user.id);
-  if (!teamId) return res.status(403).json({ error: 'لست عضواً في أي فريق' });
+router.post('/', requireAuth, async (req, res, next) => {
+  try {
+    const teamId = await getUserTeamId(req.user.id);
+    if (!teamId) return res.status(403).json({ error: 'لست عضواً في أي فريق' });
 
-  const { body, file_url, file_name, file_type } = req.body || {};
-  const text = (body || '').trim();
-  if (!text && !file_url) {
-    return res.status(400).json({ error: 'الرسالة فارغة' });
+    const { body, file_url, file_name, file_type } = req.body || {};
+    const text = (body || '').trim();
+    if (!text && !file_url) {
+      return res.status(400).json({ error: 'الرسالة فارغة' });
+    }
+
+    const inserted = await db.get(
+      'INSERT INTO team_messages (team_id, sender_id, body, file_url, file_name, file_type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+      [teamId, req.user.id, text, file_url || null, file_name || null, file_type || null]
+    );
+
+    const message = await db.get(`${MESSAGE_SELECT} WHERE m.id = $1`, [inserted.id]);
+    return res.json({ message });
+  } catch (e) {
+    next(e);
   }
-
-  const info = db
-    .prepare(
-      'INSERT INTO team_messages (team_id, sender_id, body, file_url, file_name, file_type) VALUES (?, ?, ?, ?, ?, ?)'
-    )
-    .run(teamId, req.user.id, text, file_url || null, file_name || null, file_type || null);
-
-  const message = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(info.lastInsertRowid);
-  return res.json({ message });
 });
 
 // POST /api/team-messages/upload - upload an attachment to Cloudinary
@@ -130,12 +151,13 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 // original filename (Cloudinary stores it under a random public_id, so a direct
 // link downloads with a meaningless name and no extension).
 router.get('/:id/download', requireAuth, async (req, res) => {
-  const teamId = getUserTeamId(req.user.id);
+  const teamId = await getUserTeamId(req.user.id);
   if (!teamId) return res.status(403).json({ error: 'لست عضواً في أي فريق' });
 
-  const msg = db
-    .prepare('SELECT file_url, file_name, file_type FROM team_messages WHERE id = ? AND team_id = ?')
-    .get(req.params.id, teamId);
+  const msg = await db.get(
+    'SELECT file_url, file_name, file_type FROM team_messages WHERE id = $1 AND team_id = $2',
+    [req.params.id, teamId]
+  );
   if (!msg || !msg.file_url) return res.status(404).json({ error: 'الملف غير موجود' });
 
   try {

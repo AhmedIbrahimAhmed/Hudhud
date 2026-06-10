@@ -1,12 +1,26 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client.js';
 import { useConfirm } from './ConfirmDialog.jsx';
 import { useAuth } from '../auth/AuthContext.jsx';
+import { useTeam } from '../team/TeamContext.jsx';
 import { keepIfSame } from '../utils/keepIfSame.js';
 import FileDropzone from './FileDropzone.jsx';
+import PdfPreviewModal from './PdfPreviewModal.jsx';
+
+// Detect PDFs by MIME type or .pdf extension (uploads sometimes carry a generic
+// type like application/octet-stream).
+function isPdf({ file_type = '', file_name = '', file_url = '' }) {
+  const mime = file_type || '';
+  const name = (file_name || file_url || '').toLowerCase();
+  return mime === 'application/pdf' || /\.pdf$/.test(name);
+}
 
 export default function TaskAssignment({ teamId, role, onTaskChange }) {
   const { user } = useAuth();
+  // `version` bumps whenever ANY component mutates team/task data, so this list
+  // refetches immediately instead of waiting for the poll. `notifyTeamDataChanged`
+  // lets our own mutations broadcast to the other task views (e.g. the calendar).
+  const { version, notifyTeamDataChanged } = useTeam();
   const [tasks, setTasks] = useState([]);
   const [myTasks, setMyTasks] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -24,11 +38,17 @@ export default function TaskAssignment({ teamId, role, onTaskChange }) {
   const [uploadedName, setUploadedName] = useState('');
   const [uploadedType, setUploadedType] = useState('');
   const [uploadError, setUploadError] = useState('');
+  const [previewPdf, setPreviewPdf] = useState(null); // { url, name }
   const [editingTask, setEditingTask] = useState(null);
   const [editFormData, setEditFormData] = useState({
     status: '',
     comments: '',
   });
+  // Header filters + pagination (client-side over the loaded task list).
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dayFilter, setDayFilter] = useState(''); // 'YYYY-MM-DD' or ''
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 4;
   const confirm = useConfirm();
 
   useEffect(() => {
@@ -36,17 +56,20 @@ export default function TaskAssignment({ teamId, role, onTaskChange }) {
       loadTasks();
       loadMembers();
       loadMyTasks();
-      
-      // Poll for task updates every 5 seconds
+
+      // Poll as a backstop for changes made by OTHER users. Our own mutations
+      // (and those of sibling task views) refetch immediately via `version`.
       const interval = setInterval(() => {
         loadTasks();
         loadMembers();
         loadMyTasks();
       }, 5000);
-      
+
       return () => clearInterval(interval);
     }
-  }, [teamId]);
+    // Re-run when teamId changes OR when any team/task mutation bumps `version`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId, version]);
 
   async function loadTasks() {
     try {
@@ -95,6 +118,7 @@ export default function TaskAssignment({ teamId, role, onTaskChange }) {
       setShowAssignForm(false);
       setFormData({ assigned_to: '', title: '', description: '', due_date: '', due_time: '' });
       loadTasks();
+      notifyTeamDataChanged();
     } catch (e) {
       console.error('Failed to assign task:', e);
     }
@@ -134,6 +158,7 @@ export default function TaskAssignment({ teamId, role, onTaskChange }) {
       setUploadedType('');
       loadTasks();
       loadMyTasks();
+      notifyTeamDataChanged();
       if (onTaskChange) onTaskChange();
     } catch (e) {
       console.error('Failed to complete task:', e);
@@ -167,6 +192,7 @@ export default function TaskAssignment({ teamId, role, onTaskChange }) {
       setEditingTask(null);
       setEditFormData({ status: '', comments: '' });
       loadTasks();
+      notifyTeamDataChanged();
       if (onTaskChange) onTaskChange();
     } catch (e) {
       console.error('Failed to update task:', e);
@@ -186,25 +212,94 @@ export default function TaskAssignment({ teamId, role, onTaskChange }) {
     try {
       await api.delete(`/team-tasks/${taskId}`);
       loadTasks();
+      notifyTeamDataChanged();
     } catch (e) {
       console.error('Failed to delete task:', e);
     }
   }
 
+  // Resolve a task's assignee display name: the API already returns
+  // `assigned_to_name`, but fall back to the local members lookup by id when it's
+  // missing so search-by-name stays robust.
+  function assigneeName(task) {
+    if (task.assigned_to_name) return task.assigned_to_name;
+    const m = members.find((mm) => String(mm.user_id) === String(task.assigned_to));
+    return m ? m.display_name || m.email || '' : '';
+  }
+
+  // Compose filters: search (title OR assignee name, case-insensitive substring)
+  // AND day (exact due_date match). Both are applied before pagination.
+  const filteredTasks = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return tasks.filter((task) => {
+      if (dayFilter && task.due_date !== dayFilter) return false;
+      if (q) {
+        const title = (task.title || '').toLowerCase();
+        const name = assigneeName(task).toLowerCase();
+        if (!title.includes(q) && !name.includes(q)) return false;
+      }
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, members, searchQuery, dayFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredTasks.length / PAGE_SIZE));
+  // Clamp the current page so it stays valid as the filtered list shrinks.
+  const currentPage = Math.min(page, totalPages);
+  const pagedTasks = filteredTasks.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
+
+  // Reset to the first page whenever the filters change or the underlying list
+  // changes length (e.g. a task was added/removed).
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, dayFilter, tasks.length]);
+
   if (!teamId) return null;
 
   return (
     <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <h3 className="text-lg font-bold text-gray-800">مهام الفريق</h3>
-        {role === 'leader' && (
-          <button
-            onClick={() => setShowAssignForm(true)}
-            className="bg-brand text-white text-sm px-4 py-2 rounded-xl hover:bg-brand-dark transition"
-          >
-            تعيين مهمة
-          </button>
-        )}
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="بحث بالعنوان أو اسم المكلّف"
+            className="text-sm p-2 border border-gray-200 rounded-lg w-full sm:w-56"
+          />
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500 whitespace-nowrap">اليوم</label>
+            <input
+              type="date"
+              value={dayFilter}
+              onChange={(e) => setDayFilter(e.target.value)}
+              dir="ltr"
+              className="text-sm p-2 border border-gray-200 rounded-lg flex-1 sm:flex-none"
+            />
+            {dayFilter && (
+              <button
+                type="button"
+                onClick={() => setDayFilter('')}
+                title="مسح التاريخ"
+                className="text-xs text-gray-500 hover:text-gray-700 px-1"
+              >
+                مسح
+              </button>
+            )}
+          </div>
+          {role === 'leader' && (
+            <button
+              onClick={() => setShowAssignForm(true)}
+              className="bg-brand text-white text-sm px-4 py-2 rounded-xl hover:bg-brand-dark transition whitespace-nowrap"
+            >
+              تعيين مهمة
+            </button>
+          )}
+        </div>
       </div>
 
       {showAssignForm && (
@@ -279,9 +374,11 @@ export default function TaskAssignment({ teamId, role, onTaskChange }) {
         <p className="text-xs text-gray-400 text-center py-6">جارٍ التحميل…</p>
       ) : tasks.length === 0 ? (
         <p className="text-xs text-gray-400 text-center py-6">لا توجد مهام بعد</p>
+      ) : filteredTasks.length === 0 ? (
+        <p className="text-xs text-gray-400 text-center py-6">لا توجد مهام مطابقة</p>
       ) : (
         <div className="space-y-3">
-          {tasks.map((task) => (
+          {pagedTasks.map((task) => (
             <div
               key={task.id}
               className={`p-4 rounded-lg border relative ${
@@ -336,16 +433,40 @@ export default function TaskAssignment({ teamId, role, onTaskChange }) {
                 </div>
               )}
               {task.file_url && (
-                <div className="mt-2">
-                  <button
-                    type="button"
-                    onClick={() => downloadTaskFile(task)}
-                    title="تنزيل الملف"
-                    className="inline-flex items-center gap-1.5 text-xs text-brand hover:underline"
-                  >
-                    📎 <span className="truncate max-w-[220px]">{task.file_name || 'الملف المرفق'}</span>
-                    <span className="text-[10px] opacity-70">⬇</span>
-                  </button>
+                <div className="mt-2 flex items-center gap-3">
+                  {isPdf(task) ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewPdf({ url: task.file_url, name: task.file_name || 'ملف PDF' })
+                        }
+                        title="معاينة الملف"
+                        className="inline-flex items-center gap-1.5 text-xs text-brand hover:underline"
+                      >
+                        📄 <span className="truncate max-w-[220px]">{task.file_name || 'الملف المرفق'}</span>
+                        <span className="text-[10px] opacity-70">👁</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => downloadTaskFile(task)}
+                        title="تنزيل الملف"
+                        className="text-[10px] text-brand opacity-70 hover:opacity-100"
+                      >
+                        ⬇
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => downloadTaskFile(task)}
+                      title="تنزيل الملف"
+                      className="inline-flex items-center gap-1.5 text-xs text-brand hover:underline"
+                    >
+                      📎 <span className="truncate max-w-[220px]">{task.file_name || 'الملف المرفق'}</span>
+                      <span className="text-[10px] opacity-70">⬇</span>
+                    </button>
+                  )}
                 </div>
               )}
               {editingTask === task.id && (
@@ -394,6 +515,7 @@ export default function TaskAssignment({ teamId, role, onTaskChange }) {
                     onFile={(f) => handleFileUpload(f, task.id)}
                     uploading={uploadingTaskId === task.id}
                     fileName={fileUrl ? uploadedName : ''}
+                    accept="image/*,application/pdf,.pdf,.zip,.rar"
                   />
                   {uploadError && <p className="text-xs text-flag-red mt-2">{uploadError}</p>}
                   {fileUrl && (
@@ -409,6 +531,41 @@ export default function TaskAssignment({ teamId, role, onTaskChange }) {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Pagination — 4 per page. RTL-aware: "previous" advances toward newer
+          pages visually on the right via flex-row-reverse. */}
+      {!loading && filteredTasks.length > PAGE_SIZE && (
+        <div className="flex flex-row-reverse items-center justify-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage <= 1}
+            className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            السابق
+          </button>
+          <span className="text-xs text-gray-500">
+            صفحة {currentPage} من {totalPages}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={currentPage >= totalPages}
+            className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            التالي
+          </button>
+        </div>
+      )}
+
+      {/* PDF Preview Modal */}
+      {previewPdf && (
+        <PdfPreviewModal
+          fileUrl={previewPdf.url}
+          fileName={previewPdf.name}
+          onClose={() => setPreviewPdf(null)}
+        />
       )}
     </div>
   );

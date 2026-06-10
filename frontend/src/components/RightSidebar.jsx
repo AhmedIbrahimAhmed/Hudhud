@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
+import { useTeam } from "../team/TeamContext.jsx";
 import SessionsModal from "./SessionsModal.jsx";
 import api from "../api/client.js";
 import { keepIfSame } from "../utils/keepIfSame.js";
@@ -13,6 +14,7 @@ const linkClass = ({ isActive }) =>
 
 export default function RightSidebar({ onNavigate }) {
   const { user, logout } = useAuth();
+  const { respondToInvite: respondToInviteShared } = useTeam();
   const navigate = useNavigate();
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -102,8 +104,10 @@ export default function RightSidebar({ onNavigate }) {
     if (!user?.id) return;
     setActingInvite(invite.team_id);
     try {
-      await api.post(`/teams/${invite.team_id}/members/${user.id}/${action}`);
-      // Refresh everything so the invite disappears and counts update.
+      // Updates the shared team store immediately (so an accepted invite shows
+      // the team across the app), then refresh the local invite/notification
+      // lists so the invite disappears and counts update.
+      await respondToInviteShared(invite.team_id, user.id, action);
       await Promise.all([loadPendingInvites(), loadNotifications(), loadUnreadCount()]);
       setInviteDialog(null);
     } catch (e) {
@@ -122,8 +126,10 @@ export default function RightSidebar({ onNavigate }) {
           <OnlineBadge className="mt-2" />
         </div>
 
-        {/* Notifications bell + popup */}
-        <div className="relative shrink-0" ref={notifRef}>
+        {/* Notifications bell + popup.
+            Hidden on small screens: on mobile the bell lives in the top header
+            (Layout.jsx) beside the menu button, so it isn't duplicated here. */}
+        <div className="relative shrink-0 hidden lg:block" ref={notifRef}>
           <button
             type="button"
             onClick={() => setNotificationsOpen((o) => !o)}

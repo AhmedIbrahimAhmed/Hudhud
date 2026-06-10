@@ -178,53 +178,62 @@ export default function Profile() {
   return (
     <div className="max-w-full mx-auto py-6 px-4 space-y-5">
       {/* User Info Card */}
-      <div className="bg-white border border-gray-200 rounded-2xl p-6">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-20 h-20 rounded-full bg-brand-light grid place-items-center overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="w-16 h-16 sm:w-20 sm:h-20 shrink-0 rounded-full bg-brand-light grid place-items-center overflow-hidden">
               {user?.avatar_path ? (
                 <img src={user.avatar_path} alt="" className="w-full h-full object-cover" />
               ) : (
                 <span className="text-brand text-2xl">{(user?.display_name || '؟')[0]}</span>
               )}
             </div>
-            <div>
-              <h2 className="text-xl font-bold text-gray-800">{user?.display_name || '—'}</h2>
-              <p className="text-sm text-gray-500">{user?.email || '—'}</p>
+            <div className="min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-gray-800 truncate">{user?.display_name || '—'}</h2>
+              <p className="text-sm text-gray-500 truncate">{user?.email || '—'}</p>
               <p className="text-xs text-gray-400 mt-1">
                 انضم في {formatDate(user?.created_at)}
               </p>
               {teamInfo && (
-                <p className="text-xs text-brand mt-1">
+                <p className="text-xs text-brand mt-1 truncate">
                   فريق: {teamInfo.name}
                 </p>
               )}
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 shrink-0">
             <button
               onClick={() => {
                 setEditName(user?.display_name || '');
                 setEditBio(user?.bio || '');
                 setEditModalOpen(true);
               }}
-              className="text-sm text-brand border border-brand rounded-lg px-3 py-1.5 hover:bg-brand-light"
+              title="تعديل الملف"
+              aria-label="تعديل الملف"
+              className="inline-flex items-center gap-1.5 text-sm text-brand border border-brand rounded-lg px-3 py-2 hover:bg-brand-light"
             >
-              تعديل الملف
+              <span aria-hidden="true">✏️</span>
+              <span className="hidden sm:inline">تعديل الملف</span>
             </button>
-            
+
             <button
               onClick={() => fileRef.current?.click()}
-              className="text-sm text-gray-600 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50"
+              title="تغيير الصورة"
+              aria-label="تغيير الصورة"
+              className="inline-flex items-center gap-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50"
             >
-              تغيير الصورة
+              <span aria-hidden="true">📷</span>
+              <span className="hidden sm:inline">تغيير الصورة</span>
             </button>
             <button
-          onClick={() => setPasswordModalOpen(true)}
-          className="text-sm text-gray-600 border border-gray-200 rounded-lg px-4 py-2 hover:bg-gray-50"
-        >
-          🔒 تغيير كلمة المرور
-        </button>
+              onClick={() => setPasswordModalOpen(true)}
+              title="تغيير كلمة المرور"
+              aria-label="تغيير كلمة المرور"
+              className="inline-flex items-center gap-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50"
+            >
+              <span aria-hidden="true">🔒</span>
+              <span className="hidden sm:inline">تغيير كلمة المرور</span>
+            </button>
             <input
               ref={fileRef}
               type="file"
@@ -472,11 +481,13 @@ function StatCard({ label, value, icon, color }) {
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4">
-      <div className={`w-10 h-10 rounded-lg ${colorClasses[color]} grid place-items-center text-xl mb-2`}>
-        {icon}
+      <div className="flex items-center gap-3">
+        <div className={`w-10 h-10 shrink-0 rounded-lg ${colorClasses[color]} grid place-items-center text-xl`}>
+          {icon}
+        </div>
+        <div className="text-2xl font-bold text-gray-800 truncate">{value}</div>
       </div>
-      <div className="text-2xl font-bold text-gray-800">{value}</div>
-      <div className="text-xs text-gray-500">{label}</div>
+      <div className="text-xs text-gray-500 mt-2">{label}</div>
     </div>
   );
 }

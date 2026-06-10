@@ -1,29 +1,11 @@
-import { useEffect, useState } from 'react';
-import api from '../api/client.js';
 import TaskAssignment from '../components/TaskAssignment.jsx';
 import TeamCalendar from '../components/TeamCalendar.jsx';
-import { keepIfSame } from '../utils/keepIfSame.js';
+import { useTeam } from '../team/TeamContext.jsx';
 
 export default function TeamPage() {
-  const [team, setTeam] = useState(null);
-  const [teamRole, setTeamRole] = useState(null);
-
-  useEffect(() => {
-    loadTeamData();
-    // Poll so the page reflects team creation/deletion done from the side panel.
-    const interval = setInterval(loadTeamData, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  async function loadTeamData() {
-    try {
-      const r = await api.get('/teams');
-      setTeam((prev) => keepIfSame(prev, r.data.team));
-      setTeamRole(r.data.role);
-    } catch {
-      // ignore transient errors
-    }
-  }
+  // Shared team state — updates immediately when a team is created/deleted from
+  // the side panel (no waiting for a poll).
+  const { team, role } = useTeam();
 
   return (
     <div className="max-w-full mx-auto py-6 px-4 space-y-5">
@@ -33,8 +15,8 @@ export default function TeamPage() {
 
       {team ? (
         <>
-          <TeamCalendar teamId={team.id} role={teamRole} />
-          <TaskAssignment teamId={team.id} role={teamRole} />
+          <TeamCalendar teamId={team.id} role={role} />
+          <TaskAssignment teamId={team.id} role={role} />
         </>
       ) : (
         <div className="bg-white border border-gray-200 rounded-2xl p-6 text-sm text-gray-500 text-center">

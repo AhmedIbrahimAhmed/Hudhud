@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import api from '../api/client.js';
 import jsPDF from 'jspdf';
+import { shapeArabic, registerArabicFont, wrapArabic } from '../utils/arabicPdf.js';
 
 // Editorial policies extracted from the codebase
 const EDITORIAL_POLICIES = [
@@ -252,109 +253,175 @@ export default function Policies() {
     setExpandedSection(expandedSection === index ? null : index);
   };
 
-  const exportToPDF = () => {
+  // Build the PDF entirely with jsPDF using an embedded Arabic TTF font (Amiri).
+  // jsPDF v3 handles Arabic shaping + bidi internally at draw time, so the
+  // arabicPdf util only embeds a glyph-complete font and swaps unsupported
+  // characters (arrows) for a covered fallback. Text is drawn right-aligned at
+  // the right margin so Arabic, embedded Latin/numbers, % and parentheses all
+  // render correctly in a right-to-left layout.
+  const exportToPDF = async () => {
     setExporting(true);
     try {
-      const doc = new jsPDF();
+      const doc = new jsPDF('p', 'mm', 'a4');
+      registerArabicFont(doc);
+
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 20;
-      const maxWidth = pageWidth - margin * 2;
-      let yPosition = margin;
+      const margin = 16;
+      const rightX = pageWidth - margin; // baseline x for right-aligned text
+      const contentWidth = pageWidth - margin * 2;
+      const bottom = pageHeight - margin;
 
-      // Helper function to add text with word wrap
-      const addText = (text, fontSize = 12, isBold = false, color = [0, 0, 0]) => {
-        doc.setFontSize(fontSize);
-        doc.setTextColor(color[0], color[1], color[2]);
-        doc.setFont('helvetica', isBold ? 'bold' : 'normal');
-        
-        const lines = doc.splitTextToSize(text, maxWidth);
-        lines.forEach((line) => {
-          if (yPosition > pageHeight - margin) {
-            doc.addPage();
-            yPosition = margin;
-          }
-          doc.text(line, margin, yPosition);
-          yPosition += fontSize * 0.5;
-        });
-        return yPosition;
+      const COLOR_TEXT = [17, 24, 39];
+      const COLOR_BRAND = [10, 125, 79];
+      const COLOR_MUTED = [107, 114, 128];
+      const COLOR_FAINT = [156, 163, 175];
+      const COLOR_GRAY = [75, 85, 99];
+      const COLOR_RED = [220, 38, 38];
+
+      let y = margin;
+
+      const ensureSpace = (needed) => {
+        if (y + needed > bottom) {
+          doc.addPage();
+          y = margin;
+        }
       };
 
-      // Title
-      doc.setFontSize(20);
-      doc.setTextColor(10, 125, 79); // brand color
-      doc.setFont('helvetica', 'bold');
-      doc.text('السياسات التحريرية والإرشادات', margin, yPosition);
-      yPosition += 15;
+      // Draw a logical-order Arabic string (wrapping to content width), at the
+      // given font size/weight/color. `x` defaults to the right margin and the
+      // text is right-aligned. Advances `y`.
+      const drawText = (text, options = {}) => {
+        const {
+          size = 12,
+          weight = 'normal',
+          color = COLOR_TEXT,
+          lineHeight = 1.6,
+          gapAfter = 1.5,
+          maxWidth = contentWidth,
+          x = rightX,
+        } = options;
 
-      // Date
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`تاريخ التصدير: ${new Date().toLocaleDateString('ar-EG')}`, margin, yPosition);
-      yPosition += 20;
+        doc.setFont('Amiri', weight);
+        doc.setFontSize(size);
+        doc.setTextColor(color[0], color[1], color[2]);
 
-      // Section 1: Editorial Policies
-      yPosition = addText('1. السياسات التحريرية', 16, true, [10, 125, 79]);
-      yPosition += 10;
+        const lineStep = (size * 0.3528) * lineHeight; // pt -> mm
+        const lines = wrapArabic(doc, text, maxWidth);
 
-      EDITORIAL_POLICIES.forEach((policy, policyIndex) => {
-        yPosition = addText(`${policyIndex + 1}.1 ${policy.title}`, 14, true);
-        yPosition = addText(`الفئة: ${policy.category} | آخر تحديث: ${policy.lastUpdated}`, 10, false, [100, 100, 100]);
-        yPosition += 5;
+        // A heading like "1.1 العنوان": pin the leading section number to the
+        // right edge and draw the title to its left. This places the number on
+        // the right deterministically, without relying on the PDF viewer's bidi
+        // (which inconsistently puts a leading number on the wrong side).
+        const headingNum =
+          lines.length === 1 ? /^(\d[\d.]*\.?)\s+(\S[\s\S]*)$/.exec(lines[0]) : null;
 
-        if (policy.description) {
-          yPosition = addText(policy.description, 11);
-          yPosition += 5;
-        }
-
-        policy.sections.forEach((section, sectionIndex) => {
-          yPosition = addText(`${policyIndex + 1}.1.${sectionIndex + 1} ${section.title}`, 12, true);
-          yPosition = addText(section.description, 10, false, [100, 100, 100]);
-          yPosition += 3;
-
-          section.rules.forEach((rule) => {
-            yPosition = addText(`• ${rule}`, 10);
-          });
-          yPosition += 5;
+        lines.forEach((line) => {
+          ensureSpace(lineStep);
+          y += lineStep;
+          if (headingNum) {
+            const num = shapeArabic(headingNum[1]);
+            doc.text(num, x, y, { align: 'right' });
+            doc.text(shapeArabic(headingNum[2]), x - doc.getTextWidth(num + '  '), y, {
+              align: 'right',
+            });
+          } else {
+            doc.text(shapeArabic(line), x, y, { align: 'right' });
+          }
         });
-        yPosition += 10;
+        y += gapAfter;
+      };
+
+      const sectionHeading = (text) => {
+        ensureSpace(14);
+        y += 4;
+        drawText(text, { size: 18, weight: 'bold', color: COLOR_BRAND, gapAfter: 1 });
+        // underline under the heading band
+        doc.setDrawColor(COLOR_BRAND[0], COLOR_BRAND[1], COLOR_BRAND[2]);
+        doc.setLineWidth(0.6);
+        doc.line(margin, y, pageWidth - margin, y);
+        y += 4;
+      };
+
+      // Title + export date
+      drawText('السياسات التحريرية والإرشادات', {
+        size: 24,
+        weight: 'bold',
+        color: COLOR_BRAND,
+        gapAfter: 2,
+      });
+      drawText(`تاريخ التصدير: ${new Date().toLocaleDateString('en-GB')}`, {
+        size: 11,
+        color: COLOR_MUTED,
+        gapAfter: 6,
       });
 
-      // Section 2: Misused Terminology
-      if (yPosition > pageHeight - margin) {
-        doc.addPage();
-        yPosition = margin;
-      }
-      yPosition = addText('2. المصطلحات المُستبدلة', 16, true, [10, 125, 79]);
-      yPosition += 10;
-
-      MISUSED_TERMINOLOGY.forEach((term, index) => {
-        yPosition = addText(`${index + 1}. ${term.wrong} → ${term.correct}`, 11, true);
-        yPosition = addText(term.explanation, 10, false, [100, 100, 100]);
-        yPosition = addText(`الفئة: ${term.category}`, 9, false, [150, 150, 150]);
-        yPosition += 8;
+      // 1. Editorial policies
+      sectionHeading('1. السياسات التحريرية');
+      EDITORIAL_POLICIES.forEach((policy, policyIndex) => {
+        drawText(`${policyIndex + 1}.1 ${policy.title}`, {
+          size: 15,
+          weight: 'bold',
+          color: COLOR_BRAND,
+          gapAfter: 1,
+        });
+        drawText(`الفئة: ${policy.category} | آخر تحديث: ${policy.lastUpdated}`, {
+          size: 10,
+          color: COLOR_FAINT,
+          gapAfter: 1.5,
+        });
+        if (policy.description) {
+          drawText(policy.description, { size: 11, color: COLOR_GRAY, gapAfter: 2 });
+        }
+        policy.sections.forEach((section, sectionIndex) => {
+          drawText(`${policyIndex + 1}.1.${sectionIndex + 1} ${section.title}`, {
+            size: 12,
+            weight: 'bold',
+            color: COLOR_GRAY,
+            gapAfter: 1,
+          });
+          if (section.description) {
+            drawText(section.description, { size: 11, color: COLOR_MUTED, gapAfter: 1 });
+          }
+          section.rules.forEach((rule) => {
+            drawText(`• ${rule}`, {
+              size: 11,
+              color: COLOR_GRAY,
+              maxWidth: contentWidth - 4,
+              gapAfter: 0.5,
+            });
+          });
+          y += 2;
+        });
+        y += 3;
       });
 
-      // Section 3: Stop Words
-      if (yPosition > pageHeight - margin) {
-        doc.addPage();
-        yPosition = margin;
-      }
-      yPosition = addText('3. كلمات التوقف العربية', 16, true, [10, 125, 79]);
-      yPosition += 10;
-      yPosition = addText(`إجمالي: ${STOP_WORDS.length} كلمة توقف`, 11);
-      yPosition += 10;
+      // 2. Replaced terminology
+      sectionHeading('2. المصطلحات المُستبدلة');
+      MISUSED_TERMINOLOGY.forEach((term) => {
+        drawText(`${term.wrong}  ←  ${term.correct}`, {
+          size: 12,
+          weight: 'bold',
+          color: COLOR_RED,
+          gapAfter: 1,
+        });
+        drawText(term.explanation, { size: 11, color: COLOR_MUTED, gapAfter: 1 });
+        drawText(`الفئة: ${term.category}`, {
+          size: 10,
+          color: COLOR_FAINT,
+          gapAfter: 3,
+        });
+      });
 
-      // Group stop words in lines
-      const wordsPerLine = 8;
-      for (let i = 0; i < STOP_WORDS.length; i += wordsPerLine) {
-        const lineWords = STOP_WORDS.slice(i, i + wordsPerLine);
-        const lineText = lineWords.join(' | ');
-        yPosition = addText(lineText, 10);
-      }
+      // 3. Arabic stop words
+      sectionHeading('3. كلمات التوقف العربية');
+      drawText(`إجمالي: ${STOP_WORDS.length} كلمة توقف`, {
+        size: 11,
+        color: COLOR_GRAY,
+        gapAfter: 2,
+      });
+      drawText(STOP_WORDS.join('، '), { size: 12, color: COLOR_GRAY, gapAfter: 2 });
 
-      // Save PDF
       doc.save('السياسات_التحريرية.pdf');
     } catch (error) {
       console.error('Error exporting PDF:', error);

@@ -28,32 +28,45 @@ const upload = multer({
 const router = Router();
 
 // PUT /api/profile  { display_name, bio }
-router.put('/', requireAuth, (req, res) => {
-  const { display_name, bio } = req.body || {};
-  db.prepare('UPDATE users SET display_name = ?, bio = ? WHERE id = ?').run(
-    display_name ?? '',
-    bio ?? '',
-    req.user.id
-  );
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  return res.json({ user: publicUser(user) });
+router.put('/', requireAuth, async (req, res, next) => {
+  try {
+    const { display_name, bio } = req.body || {};
+    await db.run('UPDATE users SET display_name = $1, bio = $2 WHERE id = $3', [
+      display_name ?? '',
+      bio ?? '',
+      req.user.id,
+    ]);
+    const user = await db.get('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    return res.json({ user: publicUser(user) });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // POST /api/profile/avatar  (multipart, field "avatar")
-router.post('/avatar', requireAuth, upload.single('avatar'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'لم يتم رفع أي ملف' });
-  const publicPath = `/uploads/${req.file.filename}`;
-  db.prepare('UPDATE users SET avatar_path = ? WHERE id = ?').run(publicPath, req.user.id);
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  return res.json({ user: publicUser(user) });
+router.post('/avatar', requireAuth, upload.single('avatar'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'لم يتم رفع أي ملف' });
+    const publicPath = `/uploads/${req.file.filename}`;
+    await db.run('UPDATE users SET avatar_path = $1 WHERE id = $2', [publicPath, req.user.id]);
+    const user = await db.get('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    return res.json({ user: publicUser(user) });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // GET /api/profile/contributions
-router.get('/contributions', requireAuth, (req, res) => {
-  const rows = db.prepare(
-    'SELECT date, count FROM contributions WHERE user_id = ? ORDER BY date ASC'
-  ).all(req.user.id);
-  return res.json({ contributions: rows });
+router.get('/contributions', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await db.all(
+      'SELECT date, count FROM contributions WHERE user_id = $1 ORDER BY date ASC',
+      [req.user.id]
+    );
+    return res.json({ contributions: rows });
+  } catch (e) {
+    next(e);
+  }
 });
 
 export default router;

@@ -20,80 +20,103 @@ router.post('/process', requireAuth, async (req, res) => {
 });
 
 // POST /api/articles  { title, body, cleaned_text, result, chat }  -> save
-router.post('/', requireAuth, (req, res) => {
-  const { title, body, cleaned_text, result, chat } = req.body || {};
-  const info = db
-    .prepare(
+router.post('/', requireAuth, async (req, res, next) => {
+  try {
+    const { title, body, cleaned_text, result, chat } = req.body || {};
+    const inserted = await db.get(
       `INSERT INTO articles (user_id, title, body, cleaned_text, result_json, chat_json)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      req.user.id,
-      title || '',
-      body || '',
-      cleaned_text || '',
-      JSON.stringify(result || {}),
-      JSON.stringify(Array.isArray(chat) ? chat : [])
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [
+        req.user.id,
+        title || '',
+        body || '',
+        cleaned_text || '',
+        JSON.stringify(result || {}),
+        JSON.stringify(Array.isArray(chat) ? chat : []),
+      ]
     );
-  const row = db.prepare('SELECT * FROM articles WHERE id = ?').get(info.lastInsertRowid);
-  return res.json({ article: row });
+    const row = await db.get('SELECT * FROM articles WHERE id = $1', [inserted.id]);
+    return res.json({ article: row });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // PUT /api/articles/:id  { title, body, cleaned_text, result, chat }  -> update (autosave)
-router.put('/:id', requireAuth, (req, res) => {
-  const { title, body, cleaned_text, result, chat } = req.body || {};
-  const existing = db
-    .prepare('SELECT id FROM articles WHERE id = ? AND user_id = ?')
-    .get(req.params.id, req.user.id);
-  if (!existing) return res.status(404).json({ error: 'المسودة غير موجودة' });
-  db.prepare(
-    `UPDATE articles
-     SET title = ?, body = ?, cleaned_text = ?, result_json = ?, chat_json = ?, updated_at = datetime('now')
-     WHERE id = ? AND user_id = ?`
-  ).run(
-    title || '',
-    body || '',
-    cleaned_text || '',
-    JSON.stringify(result || {}),
-    JSON.stringify(Array.isArray(chat) ? chat : []),
-    req.params.id,
-    req.user.id
-  );
-  const row = db.prepare('SELECT * FROM articles WHERE id = ?').get(req.params.id);
-  return res.json({ article: row });
+router.put('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const { title, body, cleaned_text, result, chat } = req.body || {};
+    const existing = await db.get(
+      'SELECT id FROM articles WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (!existing) return res.status(404).json({ error: 'المسودة غير موجودة' });
+    await db.run(
+      `UPDATE articles
+       SET title = $1, body = $2, cleaned_text = $3, result_json = $4, chat_json = $5, updated_at = now()
+       WHERE id = $6 AND user_id = $7`,
+      [
+        title || '',
+        body || '',
+        cleaned_text || '',
+        JSON.stringify(result || {}),
+        JSON.stringify(Array.isArray(chat) ? chat : []),
+        req.params.id,
+        req.user.id,
+      ]
+    );
+    const row = await db.get('SELECT * FROM articles WHERE id = $1', [req.params.id]);
+    return res.json({ article: row });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // GET /api/articles  -> list (latest first)
-router.get('/', requireAuth, (req, res) => {
-  const rows = db
-    .prepare(
+router.get('/', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await db.all(
       `SELECT id, title, substr(body,1,120) AS preview, created_at, updated_at
-       FROM articles WHERE user_id = ? ORDER BY updated_at DESC, id DESC`
-    )
-    .all(req.user.id);
-  return res.json({ articles: rows });
+       FROM articles WHERE user_id = $1 ORDER BY updated_at DESC, id DESC`,
+      [req.user.id]
+    );
+    return res.json({ articles: rows });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // GET /api/articles/:id
-router.get('/:id', requireAuth, (req, res) => {
-  const row = db
-    .prepare('SELECT * FROM articles WHERE id = ? AND user_id = ?')
-    .get(req.params.id, req.user.id);
-  if (!row) return res.status(404).json({ error: 'المقال غير موجود' });
-  return res.json({ article: row });
+router.get('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const row = await db.get(
+      'SELECT * FROM articles WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (!row) return res.status(404).json({ error: 'المقال غير موجود' });
+    return res.json({ article: row });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // DELETE /api/articles/:id
-router.delete('/:id', requireAuth, (req, res) => {
-  const existing = db
-    .prepare('SELECT id FROM articles WHERE id = ? AND user_id = ?')
-    .get(req.params.id, req.user.id);
-  if (!existing) return res.status(404).json({ error: 'المسودة غير موجودة' });
-  const info = db
-    .prepare('DELETE FROM articles WHERE id = ? AND user_id = ?')
-    .run(req.params.id, req.user.id);
-  if (info.changes === 0) return res.status(404).json({ error: 'المسودة غير موجودة' });
-  return res.json({ ok: true });
+router.delete('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const existing = await db.get(
+      'SELECT id FROM articles WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (!existing) return res.status(404).json({ error: 'المسودة غير موجودة' });
+    const info = await db.run(
+      'DELETE FROM articles WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (info.changes === 0) return res.status(404).json({ error: 'المسودة غير موجودة' });
+    return res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
 });
 
 export default router;

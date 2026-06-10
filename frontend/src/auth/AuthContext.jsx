@@ -1,34 +1,26 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import api from '../api/client.js';
+import {
+  getToken,
+  setToken,
+  getCachedUser,
+  setCachedUser,
+  clearAuth,
+} from './token.js';
 
 const AuthContext = createContext(null);
-const USER_KEY = 'hudhud:user';
-
-function cacheUser(u) {
-  try {
-    localStorage.setItem(USER_KEY, JSON.stringify(u));
-  } catch {
-    /* ignore */
-  }
-}
-function loadCachedUser() {
-  try {
-    return JSON.parse(localStorage.getItem(USER_KEY)) || null;
-  } catch {
-    return null;
-  }
-}
 
 export function AuthProvider({ children }) {
-  // Start from the cached user so a reload (even offline) stays logged in.
-  const [user, setUser] = useState(() =>
-    localStorage.getItem('token') ? loadCachedUser() : null
-  );
+  // Start from the cached user so a reload (even offline) stays logged in,
+  // but only if we actually have a token.
+  const [user, setUser] = useState(() => (getToken() ? getCachedUser() : null));
   const [loading, setLoading] = useState(true);
 
+  // On app load, validate the stored token against /auth/me and clear it if
+  // invalid/expired. (The axios response interceptor also redirects on 401,
+  // but we still clear local state here so the UI is consistent immediately.)
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) {
+    if (!getToken()) {
       setLoading(false);
       return;
     }
@@ -36,14 +28,14 @@ export function AuthProvider({ children }) {
       .get('/auth/me')
       .then((r) => {
         setUser(r.data.user);
-        cacheUser(r.data.user);
+        setCachedUser(r.data.user);
       })
       .catch((err) => {
-        // Only log out on a real auth failure (401). Network/offline errors
-        // keep the cached session so the user can keep working.
+        // Only log out on a real auth failure (401 — invalid/expired token).
+        // Network/offline errors keep the cached session so the user can keep
+        // working. The interceptor already cleared auth + redirected on 401.
         if (err.status === 401) {
-          localStorage.removeItem('token');
-          localStorage.removeItem(USER_KEY);
+          clearAuth();
           setUser(null);
         }
       })
@@ -52,29 +44,33 @@ export function AuthProvider({ children }) {
 
   async function login(email, password) {
     const r = await api.post('/auth/login', { email, password });
-    localStorage.setItem('token', r.data.token);
-    cacheUser(r.data.user);
+    setToken(r.data.token);
+    setCachedUser(r.data.user);
     setUser(r.data.user);
   }
 
   async function register(email, password, display_name) {
     const r = await api.post('/auth/register', { email, password, display_name });
-    localStorage.setItem('token', r.data.token);
-    cacheUser(r.data.user);
+    setToken(r.data.token);
+    setCachedUser(r.data.user);
     setUser(r.data.user);
   }
 
   function logout() {
-    // Clear ALL localStorage data to prevent cross-user data leaks
-    localStorage.clear();
-    // Clear sessionStorage if used
-    sessionStorage.clear();
+    // Clear ALL storage to prevent cross-user data leaks, then reset state.
+    clearAuth();
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch {
+      /* ignore */
+    }
     setUser(null);
   }
 
   function updateUser(u) {
     setUser(u);
-    cacheUser(u);
+    setCachedUser(u);
   }
 
   return (
